@@ -1,0 +1,18 @@
+# Unreal Engine
+VR/Binaries/
+VR/DerivedDataCache/
+VR/Intermediate/
+VR/Saved/
+VR/.vs/
+VR/*.sln
+VR/*.suo
+VR/*.VC.db
+VR/*.VC.opendb
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
