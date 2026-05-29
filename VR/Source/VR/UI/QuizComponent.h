@@ -5,6 +5,7 @@
 #include "QuizComponent.generated.h"
 
 class UDataTable;
+class UQuizPopupWidget;
 
 UCLASS(ClassGroup=(UI), meta=(BlueprintSpawnableComponent))
 class VR_API UQuizComponent : public UActorComponent
@@ -49,6 +50,9 @@ private:
     int32 CorrectAnswerIndex = 0;
     TWeakObjectPtr<AActor> CurrentPopup;
     TWeakObjectPtr<AActor> ResultPopup;
+
+    UPROPERTY()
+    UQuizPopupWidget* QuizWidget;
 
     const FQuizRow* FindQuizRow(FName RowName) const;
     void DisplayResultPopup(const FText& Message, bool bIsSuccess);

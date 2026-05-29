@@ -4,6 +4,7 @@
 #include "Scene1DiskManager.generated.h"
 
 class UQuizComponent;
+class UControlHUDWidget;
 
 UCLASS()
 class VR_API AScene1DiskManager : public AActor
@@ -56,6 +57,9 @@ private:
 
     UPROPERTY()
     AActor* ControlPanel;
+
+    UPROPERTY()
+    UControlHUDWidget* HUDWidget;
 
     float RotationSpeed = 50.0f;
 

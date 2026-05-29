@@ -1,6 +1,9 @@
 #include "QuizComponent.h"
 #include "QuizData.h"
+#include "QuizPopupWidget.h"
 #include "Engine/DataTable.h"
+#include "Blueprint/UserWidget.h"
+#include "Kismet/GameplayStatics.h"
 
 UQuizComponent::UQuizComponent()
 {
@@ -78,6 +81,17 @@ void UQuizComponent::ShowQuiz(FName RowName)
     UE_LOG(LogTemp, Log, TEXT("[Quiz] Show: %s (answer=%d, source=%s)"),
         *RowName.ToString(), CorrectAnswerIndex,
         QuizDataTable ? TEXT("DataTable") : TEXT("Hardcoded"));
+
+    // Create and show popup widget
+    if (!QuizWidget)
+    {
+        QuizWidget = CreateWidget<UQuizPopupWidget>(GetWorld());
+    }
+    if (QuizWidget)
+    {
+        QuizWidget->Setup(this, Row->Question, Row->Options);
+        QuizWidget->AddToViewport(100);
+    }
 }
 
 void UQuizComponent::SubmitAnswer(int32 SelectedIndex)
@@ -88,12 +102,15 @@ void UQuizComponent::SubmitAnswer(int32 SelectedIndex)
 
     if (SelectedIndex == CorrectAnswerIndex)
     {
-        CleanupPopups();
+        if (Row && QuizWidget)
+            QuizWidget->ShowResult(Row->SuccessMessage, true);
         if (Row) DisplayResultPopup(Row->SuccessMessage, true);
         OnQuizCompleted.Broadcast(true, CurrentRowName);
     }
     else
     {
+        if (Row && QuizWidget)
+            QuizWidget->ShowResult(Row->FailureMessage, false);
         if (Row) DisplayResultPopup(Row->FailureMessage, false);
     }
 }
@@ -110,4 +127,9 @@ void UQuizComponent::CleanupPopups()
 {
     if (CurrentPopup.IsValid()) { CurrentPopup->Destroy(); CurrentPopup.Reset(); }
     if (ResultPopup.IsValid()) { ResultPopup->Destroy(); ResultPopup.Reset(); }
+    if (QuizWidget)
+    {
+        QuizWidget->RemoveFromParent();
+        QuizWidget = nullptr;
+    }
 }

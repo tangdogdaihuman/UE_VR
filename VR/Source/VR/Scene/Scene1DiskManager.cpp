@@ -2,12 +2,14 @@
 #include "Interaction/InteractionManager.h"
 #include "Physics/CoriolisForceComponent.h"
 #include "UI/QuizComponent.h"
+#include "UI/ControlHUDWidget.h"
 #include "Level/LevelTransitionSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "Camera/PlayerCameraManager.h"
 #include "TimerManager.h"
+#include "Blueprint/UserWidget.h"
 
 AScene1DiskManager::AScene1DiskManager()
 {
@@ -60,6 +62,16 @@ void AScene1DiskManager::BeginPlay()
             Mesh->AttachToComponent(DiskReference->GetRootComponent(),
                 FAttachmentTransformRules::KeepRelativeTransform);
         }
+    }
+
+    // Create on-screen HUD
+    HUDWidget = CreateWidget<UControlHUDWidget>(GetWorld());
+    if (HUDWidget)
+    {
+        HUDWidget->AddToViewport(10);
+        HUDWidget->SetStatus(FString::Printf(TEXT("Disk Speed: %.0f  |  Balls: %d/%d"),
+            RotationSpeed, DestroyedBallCount, RequiredBallCount));
+        HUDWidget->SetCue(TEXT("1 = Launch Ball  |  2 = Speed+  |  3 = Speed-"));
     }
 
     UE_LOG(LogTemp, Log, TEXT("[Scene1DiskManager] Initialized. RequiredBalls=%d. Keys: 1=Fire 2=Speed+ 3=Speed-"), RequiredBallCount);
@@ -132,6 +144,10 @@ void AScene1DiskManager::OnBallDestroyed(AActor* Ball)
     if (!Ball) return;
 
     DestroyedBallCount++;
+    if (HUDWidget)
+        HUDWidget->SetStatus(FString::Printf(TEXT("Disk Speed: %.0f  |  Balls: %d/%d"),
+            RotationSpeed, DestroyedBallCount, RequiredBallCount));
+
     UE_LOG(LogTemp, Log, TEXT("[Scene1DiskManager] Ball destroyed (%d/%d)"), DestroyedBallCount, RequiredBallCount);
 
     if (DestroyedBallCount >= RequiredBallCount && !bIsInQuiz)
@@ -191,20 +207,16 @@ void AScene1DiskManager::HandleActionKey(int32 Index)
     {
     case 1: SpawnBall(); break;
     case 2:
-        if (DiskReference)
-        {
-            RotationSpeed += 50.0f;
-            if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Green,
-                FString::Printf(TEXT("Disk Speed: %.0f"), RotationSpeed));
-        }
+        RotationSpeed += 50.0f;
+        if (HUDWidget)
+            HUDWidget->SetStatus(FString::Printf(TEXT("Disk Speed: %.0f  |  Balls: %d/%d"),
+                RotationSpeed, DestroyedBallCount, RequiredBallCount));
         break;
     case 3:
-        if (DiskReference)
-        {
-            RotationSpeed = FMath::Max(0.0f, RotationSpeed - 50.0f);
-            if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Green,
-                FString::Printf(TEXT("Disk Speed: %.0f"), RotationSpeed));
-        }
+        RotationSpeed = FMath::Max(0.0f, RotationSpeed - 50.0f);
+        if (HUDWidget)
+            HUDWidget->SetStatus(FString::Printf(TEXT("Disk Speed: %.0f  |  Balls: %d/%d"),
+                RotationSpeed, DestroyedBallCount, RequiredBallCount));
         break;
     default:
         UE_LOG(LogTemp, Warning, TEXT("[Scene1DiskManager] Unknown action key: %d"), Index);
