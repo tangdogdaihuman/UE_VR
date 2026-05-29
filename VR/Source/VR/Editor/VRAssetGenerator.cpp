@@ -12,7 +12,15 @@
 #include "Components/WidgetComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/GameModeBase.h"
+#include "GameFramework/Character.h"
 #include "EditorAssetLibrary.h"
+#include "EditorLevelLibrary.h"
+#include "FileHelpers.h"
+#include "LevelEditor.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerStart.h"
+#include "UObject/ConstructorHelpers.h"
 
 void UVRAssetGenerator::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -224,9 +232,137 @@ void UVRAssetGenerator::GenerateAllAssets()
 
     // Quiz data is hardcoded in UQuizComponent::InitializeHardcodedQuizzes() — no DataTable needed
 
+    // ====== Post-creation setup ======
+    AssignDefaultMeshes();
+    ConfigureGameMode();
+
+    // Map actor placement requires GUI editor (FEditorFileUtils::LoadMap needs viewport).
+    // Run "claude agents" in-editor or place SceneManagers manually in each level.
+    UE_LOG(LogTemp, Display, TEXT("[VRAssetGen] To place SceneManagers in maps, open the editor GUI and recompile."));
+
     UE_LOG(LogTemp, Display, TEXT("==================================================="));
     UE_LOG(LogTemp, Display, TEXT("[VRAssetGen] Asset generation complete!"));
     UE_LOG(LogTemp, Display, TEXT("==================================================="));
+}
+
+void UVRAssetGenerator::AssignDefaultMeshes()
+{
+    // Load engine basic shapes
+    UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    UStaticMesh* CylinderMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
+    struct FMeshTarget { FString BP; FName Comp; UStaticMesh* Mesh; };
+    TArray<FMeshTarget> Targets = {
+        { TEXT("/Game/Blueprints/Scene1/BP_Scene1_Ball"),  FName("BallMesh"),   SphereMesh },
+        { TEXT("/Game/Blueprints/Scene2/BP_Scene2_Ball"),  FName("BallMesh"),   SphereMesh },
+        { TEXT("/Game/Blueprints/Scene1/BP_Rotate_Disk"),  FName("DiskMesh"),   CylinderMesh },
+        { TEXT("/Game/Blueprints/Scene2/BP_Virtual_Earth"),FName("EarthMesh"),  SphereMesh },
+    };
+
+    for (const FMeshTarget& T : Targets)
+    {
+        if (!T.Mesh) continue;
+        UBlueprint* BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(T.BP));
+        if (!BP || !BP->GeneratedClass) continue;
+
+        AActor* CDO = Cast<AActor>(BP->GeneratedClass->GetDefaultObject());
+        if (!CDO) continue;
+
+        UStaticMeshComponent* MC = Cast<UStaticMeshComponent>(
+            CDO->GetComponentByClass(UStaticMeshComponent::StaticClass()));
+        if (MC)
+        {
+            MC->SetStaticMesh(T.Mesh);
+            // For disk: scale cylinder to look like a flat disk
+            if (T.BP.Contains(TEXT("Rotate_Disk")))
+                MC->SetWorldScale3D(FVector(2.0f, 2.0f, 0.1f));
+            // For earth: scale sphere large
+            if (T.BP.Contains(TEXT("Virtual_Earth")))
+                MC->SetWorldScale3D(FVector(2.0f, 2.0f, 2.0f));
+
+            SaveAsset(BP);
+            UE_LOG(LogTemp, Display, TEXT("[VRAssetGen] Mesh assigned: %s -> %s"), *T.BP, *T.Mesh->GetName());
+        }
+    }
+}
+
+void UVRAssetGenerator::SetupMapActors()
+{
+    // Skip in headless/-nullrhi mode (needs viewport for map loading)
+    if (IsRunningCommandlet() || GIsRunningUnattendedScript || !GEditor) return;
+
+    struct FMapConfig { FString MapPath; FString ManagerClassName; };
+    TArray<FMapConfig> Maps = {
+        { TEXT("/Game/Maps/Coriolis/Scene1_DiskLevel"),  TEXT("/Script/VR.Scene1DiskManager") },
+        { TEXT("/Game/Maps/Coriolis/Scene2_EarthLevel"), TEXT("/Script/VR.Scene2EarthManager") },
+        { TEXT("/Game/Maps/Coriolis/Scene3_NatureLevel"),TEXT("/Script/VR.Scene3NatureManager") },
+    };
+
+    // Save current level path so we can return
+    UWorld* OriginalWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+
+    for (const FMapConfig& Cfg : Maps)
+    {
+        UClass* ManagerClass = FindObject<UClass>(nullptr, *Cfg.ManagerClassName);
+        if (!ManagerClass) continue;
+
+        // Load level
+        FString FullPath = Cfg.MapPath;
+        FullPath.RemoveFromStart(TEXT("/Game"));
+        FullPath = FPaths::ProjectContentDir() + FullPath + TEXT(".umap");
+
+        FEditorFileUtils::LoadMap(FullPath, false, true);
+
+        // Spawn SceneManager at origin
+        UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+        if (World)
+        {
+            FActorSpawnParameters Params;
+            Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+            AActor* Manager = World->SpawnActor<AActor>(ManagerClass, FVector::ZeroVector, FRotator::ZeroRotator, Params);
+            if (Manager)
+            {
+                Manager->SetActorLabel(ManagerClass->GetName());
+                UE_LOG(LogTemp, Display, TEXT("[VRAssetGen] Spawned %s in %s"),
+                    *ManagerClass->GetName(), *Cfg.MapPath);
+            }
+
+            // Also add a PlayerStart for respawn
+            APlayerStart* PS = World->SpawnActor<APlayerStart>(APlayerStart::StaticClass(),
+                FVector(0, 0, 100), FRotator::ZeroRotator, Params);
+            if (PS) PS->SetActorLabel(TEXT("PlayerStart"));
+
+            // Save the map
+            FEditorFileUtils::SaveMap(World, FullPath);
+        }
+    }
+
+    // Return to original level
+    if (OriginalWorld)
+    {
+        FString OrigPath = OriginalWorld->GetOutermost()->GetPathName();
+        UEditorLevelLibrary::LoadLevel(OrigPath);
+    }
+}
+
+void UVRAssetGenerator::ConfigureGameMode()
+{
+    UBlueprint* GM_BP = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(TEXT("/Game/Blueprints/BP_FirstPersonGameMode")));
+    if (!GM_BP || !GM_BP->GeneratedClass) return;
+
+    AGameModeBase* CDO = Cast<AGameModeBase>(GM_BP->GeneratedClass->GetDefaultObject());
+    if (!CDO) return;
+
+    // Set default pawn to AVRCharacter
+    UClass* VRCharClass = FindObject<UClass>(nullptr, TEXT("/Script/VR.VRCharacter"));
+    if (VRCharClass)
+    {
+        CDO->DefaultPawnClass = VRCharClass;
+        SaveAsset(GM_BP);
+        UE_LOG(LogTemp, Display, TEXT("[VRAssetGen] GameMode DefaultPawnClass set to VRCharacter"));
+    }
+
+    // Set default HUD (optional: could create a custom HUD class if needed)
 }
 
 #endif // WITH_EDITOR

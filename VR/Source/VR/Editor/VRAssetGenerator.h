@@ -28,6 +28,10 @@ private:
     void AddComponentToBlueprint(UBlueprint* BP, UClass* ComponentClass, const FName& ComponentName);
     void ImplementInterface(UBlueprint* BP, UClass* InterfaceClass);
 
+    void AssignDefaultMeshes();
+    void SetupMapActors();
+    void ConfigureGameMode();
+
     void EnsureDirectory(const FString& Path);
     void SaveAsset(UObject* Asset);
 };
